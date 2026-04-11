@@ -77,9 +77,9 @@ describe('StratumV1Client', () => {
                         get: jest.fn((key: string) => {
                             switch (key) {
                                 case 'DEV_FEE_ADDRESS':
-                                    return 'tb1qumezefzdeqqwn5zfvgdrhxjzc5ylr39uhuxcz4';
+                                    return 'hcash1qdxjyvjycfkhyn8tqjrc9l2cp9wwf4rhjtn04pk';
                                 case 'NETWORK':
-                                    return 'testnet';
+                                    return 'hcash';
                             }
                             return null;
                         })

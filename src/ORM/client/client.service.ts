@@ -141,4 +141,12 @@ export class ClientService {
         return result;
     }
 
+    public async getActiveClients(): Promise<ClientEntity[]> {
+        return this.clientRepository.find({
+            order: {
+                updatedAt: 'DESC'
+            }
+        });
+    }
+
 }

@@ -1,0 +1,18 @@
+services:
+  hcash-pool:
+    container_name: hcash-pool-regtest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "0.0.0.0:3333:3333/tcp"
+      - "0.0.0.0:3334:3334/tcp"
+    volumes:
+      - "./data/hcash-regtest/public-pool:/public-pool/DB"
+      - "./config/hcash-regtest.env:/public-pool/.env:ro"
+      - "../hashcash-core/data/node1/regtest/.cookie:/run/hashcash/.cookie:ro"
+    environment:
+      - NODE_ENV=production

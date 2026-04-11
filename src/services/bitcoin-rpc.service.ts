@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 export class BitcoinRpcService implements OnModuleInit {
 
     private blockHeight = 0;
+    private hasPublishedMiningInfo = false;
     private client: RPCClient;
     private _newBlock$: BehaviorSubject<IMiningInfo> = new BehaviorSubject(undefined);
     public newBlock$ = this._newBlock$.pipe(filter(block => block != null), shareReplay({ refCount: true, bufferSize: 1 }));
@@ -80,9 +81,16 @@ export class BitcoinRpcService implements OnModuleInit {
 
     public async pollMiningInfo() {
         const miningInfo = await this.getMiningInfo();
-        if (miningInfo != null && miningInfo.blocks > this.blockHeight) {
+        if (
+            miningInfo != null &&
+            (
+                !this.hasPublishedMiningInfo ||
+                miningInfo.blocks > this.blockHeight
+            )
+        ) {
             console.log("block height change");
             this._newBlock$.next(miningInfo);
+            this.hasPublishedMiningInfo = true;
             this.blockHeight = miningInfo.blocks;
         }
     }
@@ -138,12 +146,14 @@ export class BitcoinRpcService implements OnModuleInit {
 
         let blockTemplate: IBlockTemplate;
         while (blockTemplate == null) {
+            const templateRequest: any = {
+                mode: 'template',
+                capabilities: ['serverlist', 'proposal'],
+                // HashCash nodes require explicit segwit rule support in GBT requests.
+                rules: ['segwit']
+            };
             blockTemplate = await this.client.getblocktemplate({
-                template_request: {
-                    rules: ['segwit'],
-                    mode: 'template',
-                    capabilities: ['serverlist', 'proposal']
-                }
+                template_request: templateRequest
             });
         }
 
@@ -161,6 +171,43 @@ export class BitcoinRpcService implements OnModuleInit {
             return null;
         }
 
+    }
+
+    public async getMediumFeeSatVb(): Promise<number> {
+        const toSatPerVb = (feeRateBtcPerKvB: number): number => {
+            if (!Number.isFinite(feeRateBtcPerKvB) || feeRateBtcPerKvB <= 0) {
+                return 0;
+            }
+            const satPerVb = Math.round((feeRateBtcPerKvB * 100000000) / 1000);
+            return satPerVb > 0 ? satPerVb : 0;
+        };
+
+        try {
+            const estimate = await (this.client as any).estimatesmartfee({
+                conf_target: 3,
+                estimate_mode: 'CONSERVATIVE'
+            });
+            const feeRate = Number(estimate?.feerate);
+            const converted = toSatPerVb(feeRate);
+            if (converted > 0) {
+                return converted;
+            }
+        } catch (e) {
+            console.warn(`Error estimatesmartfee object-call: ${e?.message ?? e}`);
+        }
+
+        try {
+            const estimate = await (this.client as any).estimatesmartfee(3, 'CONSERVATIVE');
+            const feeRate = Number(estimate?.feerate ?? estimate);
+            const converted = toSatPerVb(feeRate);
+            if (converted > 0) {
+                return converted;
+            }
+        } catch (e) {
+            console.warn(`Error estimatesmartfee positional-call: ${e?.message ?? e}`);
+        }
+
+        return 0;
     }
 
     public async SUBMIT_BLOCK(hexdata: string): Promise<string> {
@@ -183,4 +230,3 @@ export class BitcoinRpcService implements OnModuleInit {
 
     }
 }
-

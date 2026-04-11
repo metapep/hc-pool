@@ -1,5 +1,6 @@
-import { AddressType, getAddressInfo } from 'bitcoin-address-validation';
 import * as bitcoinjs from 'bitcoinjs-lib';
+import { toHcashOutputScript } from '../network/hcash-network';
+import { getActiveChainProfile } from '../network/chain-profile';
 
 import { IJobTemplate } from '../services/stratum-v1-jobs.service';
 import { eResponseMethod } from './enums/eResponseMethod';
@@ -17,6 +18,7 @@ export class MiningJob {
     private coinbaseTransaction: bitcoinjs.Transaction;
     private coinbasePart1: string;
     private coinbasePart2: string;
+    private readonly chainProfile = getActiveChainProfile();
 
     public jobTemplateId: string;
     public networkDifficulty: number;
@@ -24,7 +26,6 @@ export class MiningJob {
 
     constructor(
         configService: ConfigService,
-        private network: bitcoinjs.networks.Network,
         public jobId: string,
         payoutInformation: AddressObject[],
         jobTemplate: IJobTemplate
@@ -34,13 +35,6 @@ export class MiningJob {
         this.jobTemplateId = jobTemplate.blockData.id;
 
         this.coinbaseTransaction = this.createCoinbaseTransaction(payoutInformation, jobTemplate.blockData.coinbasevalue);
-
-        //The commitment is recorded in a scriptPubKey of the coinbase transaction. It must be at least 38 bytes, with the first 6-byte of 0x6a24aa21a9ed, that is:
-        //     1-byte - OP_RETURN (0x6a)
-        //     1-byte - Push the following 36 bytes (0x24)
-        //     4-byte - Commitment header (0xaa21a9ed)
-        const segwitMagicBits = Buffer.from('aa21a9ed', 'hex');
-        //    32-byte - Commitment hash: Double-SHA256(witness root hash|witness reserved value)
 
         //    39th byte onwards: Optional data with no consensus meaning
         // Initial pool identifier
@@ -66,7 +60,35 @@ export class MiningJob {
         }
 
         this.coinbaseTransaction.ins[0].script = script;
-        this.coinbaseTransaction.addOutput(bitcoinjs.script.compile([bitcoinjs.opcodes.OP_RETURN, Buffer.concat([segwitMagicBits, jobTemplate.block.witnessCommit])]), 0);
+        const bootstrapCoinbaseMessageEnabled = `${configService.get('BOOTSTRAP_COINBASE_MESSAGE_ENABLED') ?? 'false'}`.toLowerCase() === 'true';
+        const bootstrapCoinbaseMessage = `${configService.get('BOOTSTRAP_COINBASE_MESSAGE') ?? ''}`;
+        const bootstrapCoinbaseMessageHeightMax = Number.parseInt(`${configService.get('BOOTSTRAP_COINBASE_MESSAGE_HEIGHT_MAX') ?? '1'}`, 10);
+        const shouldAttachBootstrapMessage = bootstrapCoinbaseMessageEnabled
+            && bootstrapCoinbaseMessage.length > 0
+            && Number.isFinite(bootstrapCoinbaseMessageHeightMax)
+            && jobTemplate.blockData.height <= bootstrapCoinbaseMessageHeightMax;
+
+        if (shouldAttachBootstrapMessage) {
+            this.coinbaseTransaction.addOutput(
+                bitcoinjs.script.compile([
+                    bitcoinjs.opcodes.OP_RETURN,
+                    Buffer.from(bootstrapCoinbaseMessage, 'utf8')
+                ]),
+                0
+            );
+        }
+
+        if (this.chainProfile.enableSegwit && jobTemplate.block.witnessCommit != null) {
+            // 0x6a24aa21a9ed + 32-byte witness commitment payload
+            const segwitMagicBits = Buffer.from('aa21a9ed', 'hex');
+            this.coinbaseTransaction.addOutput(
+                bitcoinjs.script.compile([
+                    bitcoinjs.opcodes.OP_RETURN,
+                    Buffer.concat([segwitMagicBits, jobTemplate.block.witnessCommit])
+                ]),
+                0
+            );
+        }
 
         // Check if the pool identifier is too long
         if ((this.coinbaseTransaction.weight() + jobTemplate.block.weight()) > MAX_BLOCK_WEIGHT) {
@@ -158,35 +180,20 @@ export class MiningJob {
         //Add any remaining sats from the Math.floor
         coinbaseTransaction.outs[0].value += rewardBalance;
 
-        const segwitWitnessReservedValue = Buffer.alloc(32, 0);
-
-        //and the coinbase's input's witness must consist of a single 32-byte array for the witness reserved value
-        coinbaseTransaction.ins[0].witness = [segwitWitnessReservedValue];
+        if (this.chainProfile.enableSegwit) {
+            const segwitWitnessReservedValue = Buffer.alloc(32, 0);
+            // For segwit-enabled chains, coinbase input witness contains the reserved value.
+            coinbaseTransaction.ins[0].witness = [segwitWitnessReservedValue];
+        }
 
         return coinbaseTransaction;
     }
 
     private getPaymentScript(address: string): Buffer {
-        const addressInfo = getAddressInfo(address);
-        switch (addressInfo.type) {
-            case AddressType.p2wpkh: {
-                return bitcoinjs.payments.p2wpkh({ address, network: this.network }).output;
-            }
-            case AddressType.p2pkh: {
-                return bitcoinjs.payments.p2pkh({ address, network: this.network }).output;
-            }
-            case AddressType.p2sh: {
-                return bitcoinjs.payments.p2sh({ address, network: this.network }).output;
-            }
-            case AddressType.p2tr: {
-                return bitcoinjs.payments.p2tr({ address, network: this.network }).output;
-            }
-            case AddressType.p2wsh: {
-                return bitcoinjs.payments.p2wsh({ address, network: this.network }).output;
-            }
-            default: {
-                return Buffer.alloc(0);
-            }
+        try {
+            return toHcashOutputScript(address);
+        } catch {
+            throw new Error(`Invalid ${getActiveChainProfile().ticker} payout address: ${address}`);
         }
     }
 

@@ -2,8 +2,6 @@ import { ClientStatisticsService } from '../ORM/client-statistics/client-statist
 import { ClientEntity } from '../ORM/client/client.entity';
 
 const CACHE_SIZE = 30;
-const TARGET_SUBMISSION_PER_SECOND = 10;
-const MIN_DIFF = 0.00001;
 export class StratumV1ClientStatistics {
 
     private shares: number = 0;
@@ -17,15 +15,24 @@ export class StratumV1ClientStatistics {
 	
 	public hashRate = 0;
 
+    private readonly targetSubmissionPerSecond: number;
+    private readonly minDiff: number;
+
     private previousTimeSlotTime: Date;
     private currentTimeSlotTime: Date;
 
     private previousShares: number = 0;
 
     constructor(
-        private readonly clientStatisticsService: ClientStatisticsService
+        private readonly clientStatisticsService: ClientStatisticsService,
+        options?: {
+            targetSubmissionPerSecond?: number;
+            minDiff?: number;
+        }
     ) {
         this.submissionCacheStart = new Date();
+        this.targetSubmissionPerSecond = Math.max(options?.targetSubmissionPerSecond ?? 10, 0.001);
+        this.minDiff = Math.max(options?.minDiff ?? 0.00001, 0.0000000001);
     }
 
 
@@ -135,7 +142,7 @@ export class StratumV1ClientStatistics {
 
         const difficultyPerSecond = sum / diffSeconds;
 
-        const targetDifficulty = difficultyPerSecond * TARGET_SUBMISSION_PER_SECOND;
+        const targetDifficulty = difficultyPerSecond * this.targetSubmissionPerSecond;
 
         if ((clientDifficulty * 2) < targetDifficulty || (clientDifficulty / 2) > targetDifficulty) {
             return this.nearestPowerOfTwo(targetDifficulty)
@@ -148,8 +155,8 @@ export class StratumV1ClientStatistics {
         if (val === 0) {
             return null;
         }
-        if (val < MIN_DIFF) {
-            return MIN_DIFF;
+        if (val < this.minDiff) {
+            return this.minDiff;
         }
         let x = val | (val >> 1);
         x = x | (x >> 2);
@@ -158,8 +165,8 @@ export class StratumV1ClientStatistics {
         x = x | (x >> 16);
         x = x | (x >> 32);
         const res = x - (x >> 1);
-        if (res == 0 && val * 100 < MIN_DIFF) {
-            return MIN_DIFF;
+        if (res == 0 && val * 100 < this.minDiff) {
+            return this.minDiff;
         }
         if (res == 0) {
             return this.nearestPowerOfTwo(val * 100) / 100;

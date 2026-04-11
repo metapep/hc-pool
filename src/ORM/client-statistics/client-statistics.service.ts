@@ -254,4 +254,40 @@ export class ClientStatisticsService {
     public async deleteAll() {
         return await this.clientStatisticsRepository.delete({})
     }
+
+    public async getShareSnapshot(windowMinutes: number): Promise<{
+        windowMinutes: number;
+        acceptedCount: number;
+        shares: number;
+        estimatedHashRate: number;
+        latestTime: string | null;
+    }> {
+        const safeWindowMinutes = Math.max(Math.floor(windowMinutes), 1);
+        const since = Date.now() - (safeWindowMinutes * 60 * 1000);
+
+        const query = `
+            SELECT
+                COALESCE(SUM(acceptedCount), 0) AS acceptedCount,
+                COALESCE(SUM(shares), 0) AS shares,
+                MAX(time) AS latestTime
+            FROM
+                client_statistics_entity
+            WHERE
+                time >= ${since};
+        `;
+
+        const [row] = await this.clientStatisticsRepository.query(query);
+        const acceptedCount = Number(row?.acceptedCount ?? 0);
+        const shares = Number(row?.shares ?? 0);
+        const estimatedHashRate = (shares * 4294967296) / (safeWindowMinutes * 60);
+        const latestTime = row?.latestTime != null ? new Date(Number(row.latestTime)).toISOString() : null;
+
+        return {
+            windowMinutes: safeWindowMinutes,
+            acceptedCount,
+            shares,
+            estimatedHashRate,
+            latestTime,
+        };
+    }
 }

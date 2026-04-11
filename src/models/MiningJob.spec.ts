@@ -66,7 +66,7 @@ describe('MiningJob', () => {
             console.warn = jest.fn((message: string) => console.log('WARN:', message));
             payoutInformation = [
                 {
-                    address: 'tb1qr2ylpdgp9ejpt6v2uxlqrn9penp82rzz2grnns',
+                    address: 'hcash1qdxjyvjycfkhyn8tqjrc9l2cp9wwf4rhjtn04pk',
                     percent: 100,
                 }
             ];
@@ -95,13 +95,51 @@ describe('MiningJob', () => {
         it('should create a new MiningJob if POOL_IDENTIFIER is not set and use the default', () => {
             const expectedMiningIdentifier = 'Public-Pool';
             expect(jobTemplate.block).toBeDefined();
-            const miningJob = new MiningJob(configService, bitcoinjs.networks.testnet, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
 
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
             expect(miningIdentifier).toBe(expectedMiningIdentifier);
             expect(console.warn).not.toBeCalled();
+        });
+
+        it('should append bootstrap OP_RETURN message when enabled at height 1', () => {
+            const bootstrapMessage = 'bootstrap-message-op-return';
+            jobTemplate.block.transactions = [];
+            jobTemplate.blockData.height = 1;
+
+            configService.get = jest.fn((key: string) => {
+                switch (key) {
+                    case 'BOOTSTRAP_COINBASE_MESSAGE_ENABLED': return 'true';
+                    case 'BOOTSTRAP_COINBASE_MESSAGE': return bootstrapMessage;
+                    case 'BOOTSTRAP_COINBASE_MESSAGE_HEIGHT_MAX': return '1';
+                }
+                return null;
+            });
+
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const response = JSON.parse(miningJob.response(jobTemplate));
+            expect(response.params[3]).toContain(Buffer.from(bootstrapMessage, 'utf8').toString('hex'));
+        });
+
+        it('should not append bootstrap OP_RETURN message above configured max height', () => {
+            const bootstrapMessage = 'bootstrap-message-op-return';
+            jobTemplate.block.transactions = [];
+            jobTemplate.blockData.height = 2;
+
+            configService.get = jest.fn((key: string) => {
+                switch (key) {
+                    case 'BOOTSTRAP_COINBASE_MESSAGE_ENABLED': return 'true';
+                    case 'BOOTSTRAP_COINBASE_MESSAGE': return bootstrapMessage;
+                    case 'BOOTSTRAP_COINBASE_MESSAGE_HEIGHT_MAX': return '1';
+                }
+                return null;
+            });
+
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const response = JSON.parse(miningJob.response(jobTemplate));
+            expect(response.params[3]).not.toContain(Buffer.from(bootstrapMessage, 'utf8').toString('hex'));
         });
 
         it('should use the POOL_IDENTIFIER if it doesn\'t make the script size too big', () => {
@@ -114,7 +152,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, bitcoinjs.networks.testnet, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
@@ -133,7 +171,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, bitcoinjs.networks.testnet, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
@@ -152,7 +190,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, bitcoinjs.networks.testnet, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
@@ -170,7 +208,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, bitcoinjs.networks.testnet, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);

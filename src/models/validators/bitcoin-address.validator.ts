@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { validate } from 'bitcoin-address-validation';
 import { registerDecorator, ValidationOptions, ValidatorConstraint, ValidatorConstraintInterface } from 'class-validator';
+import { isValidHcashAddress } from '../../network/hcash-network';
+import { getActiveChainProfile } from '../../network/chain-profile';
 
 
 @ValidatorConstraint({ name: 'bitcoinAddress', async: false })
@@ -13,11 +14,13 @@ export class BitcoinAddressValidator implements ValidatorConstraintInterface {
     ) { }
 
     validate(value: string): boolean {
-        return validate(value, this.configService.get('NETWORK'));
+        // NETWORK remains configurable for compatibility, but validation is HCASH-only.
+        this.configService.get('NETWORK');
+        return isValidHcashAddress(value);
     }
 
     defaultMessage(): string {
-        return 'Must be a bitcoin address';
+        return `Must be a ${getActiveChainProfile().ticker} address`;
     }
 }
 

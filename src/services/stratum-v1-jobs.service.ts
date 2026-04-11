@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import Big from 'big.js';
 import * as bitcoinjs from 'bitcoinjs-lib';
 import * as merkle from 'merkle-lib';
 import * as merkleProof from 'merkle-lib/proof';
 import { combineLatest, delay, filter, from, interval, map, Observable, shareReplay, startWith, switchMap, tap } from 'rxjs';
 
 import { MiningJob } from '../models/MiningJob';
+import { getActiveChainProfile, getPowDiff1TargetAsBigInt } from '../network/chain-profile';
 import { BitcoinRpcService } from './bitcoin-rpc.service';
 
 export interface IJobTemplate {
@@ -26,6 +28,7 @@ export class StratumV1JobsService {
 
     private lastIntervalCount: number;
     private skipNext: boolean = false;
+    private readonly chainProfile = getActiveChainProfile();
     public newMiningJob$: Observable<IJobTemplate>;
 
     public latestJobId: number = 1;
@@ -88,7 +91,9 @@ export class StratumV1JobsService {
                 const tempCoinbaseTx = new bitcoinjs.Transaction();
                 tempCoinbaseTx.version = 2;
                 tempCoinbaseTx.addInput(Buffer.alloc(32, 0), 0xffffffff, 0xffffffff);
-                tempCoinbaseTx.ins[0].witness = [Buffer.alloc(32, 0)];
+                if (this.chainProfile.enableSegwit) {
+                    tempCoinbaseTx.ins[0].witness = [Buffer.alloc(32, 0)];
+                }
                 transactions.unshift(tempCoinbaseTx);
 
                 const transactionBuffers = transactions.map(tx => tx.getHash(false));
@@ -106,7 +111,9 @@ export class StratumV1JobsService {
                 block.timestamp = timestamp;
 
                 block.transactions = transactions;
-                block.witnessCommit = bitcoinjs.Block.calculateMerkleRoot(transactions, true);
+                if (this.chainProfile.enableSegwit) {
+                    block.witnessCommit = bitcoinjs.Block.calculateMerkleRoot(transactions, true);
+                }
 
                 const id = this.getNextTemplateId();
                 this.latestJobTemplateId++;
@@ -149,15 +156,26 @@ export class StratumV1JobsService {
     }
 
     private calculateNetworkDifficulty(nBits: number) {
-        const mantissa: number = nBits & 0x007fffff;       // Extract the mantissa from nBits
-        const exponent: number = (nBits >> 24) & 0xff;       // Extract the exponent from nBits
+        const mantissa = BigInt(nBits & 0x007fffff);
+        const exponent = (nBits >> 24) & 0xff;
 
-        const target: number = mantissa * Math.pow(256, (exponent - 3));   // Calculate the target value
+        if (mantissa === BigInt(0)) {
+            return Number.POSITIVE_INFINITY;
+        }
 
-        const maxTarget = Math.pow(2, 208) * 65535; // Easiest target (max_target)
-        const difficulty: number = maxTarget / target;    // Calculate the difficulty
+        let target: bigint;
+        if (exponent <= 3) {
+            target = mantissa >> BigInt(8 * (3 - exponent));
+        } else {
+            target = mantissa << BigInt(8 * (exponent - 3));
+        }
 
-        return difficulty;
+        if (target === BigInt(0)) {
+            return Number.POSITIVE_INFINITY;
+        }
+
+        const maxTarget = getPowDiff1TargetAsBigInt();
+        return Big(maxTarget.toString()).div(target.toString()).toNumber();
     }
 
     private convertToLittleEndian(hash: string): Buffer {

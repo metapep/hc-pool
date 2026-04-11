@@ -1,89 +1,76 @@
-## Description
+# HCASH Pool (Stratum v1 + GBT)
 
-A Nestjs and Typescript Bitcoin stratum mining server.
+NestJS + TypeScript stratum server configured for HCASH.
 
-## Installation
+Protocol support:
+- Stratum v1 (mining protocol)
+- `getblocktemplate` (GBT) via JSON-RPC to `hashcashd`
+- Not Stratum v2
 
-```bash
-$ npm install
-```
+## Canonical HCASH Docker Flow
 
-create an new .env file in the root directory and configure it with the parameters in .env.example
+This repository is intended to run against your existing `hashcash-core` devnet in `../hashcash-core`.
 
-## Running the app
-
-```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production build
-$ npm run build
-```
-
-## Test
+1. Start node stack:
 
 ```bash
-# unit tests
-$ npm run test
-
-# test coverage
-$ npm run test:cov
+cd ../hashcash-core
+make regtest-up
 ```
 
-## Web interface
-
-See [public-pool-ui](https://github.com/benjamin-wilson/public-pool-ui)
-
-## Deployment
-
-Install pm2 (https://pm2.keymetrics.io/)
+2. Start pool stack:
 
 ```bash
-$ pm2 start dist/main.js
+cd ../hc-pool
+docker compose -f docker-compose.hcash-regtest.yml up -d --build
 ```
 
-## Docker
-
-Build container:
+3. Run deterministic validation:
 
 ```bash
-$ docker build -t public-pool .
+./scripts/validate-hcash-regtest.sh
 ```
 
-Run container:
+4. Stop pool stack:
 
 ```bash
-$ docker container run --name public-pool --rm -p 3333:3333 -p 3334:3334 -p 8332:8332 -v .env:/public-pool/.env public-pool
+docker compose -f docker-compose.hcash-regtest.yml down --remove-orphans
 ```
 
-### Docker Compose
+## HCASH Docker Profile
 
-Build container:
+- Compose file: `docker-compose.hcash-regtest.yml`
+- Env file: `config/hcash-regtest.env`
+- Cookie mount:
+  - source: `../hashcash-core/data/node1/regtest/.cookie`
+  - target: `/run/hashcash/.cookie`
+- RPC endpoint from container: `http://host.docker.internal:10309`
+- Chain/profile defaults live in `config/hcash-regtest.env`:
+  - address/network params (`CHAIN_*`)
+  - PoW diff1 target (`POW_DIFF1_TARGET`)
+  - vardiff tuning (`STRATUM_*`)
+
+Ports:
+- Stratum: `3333/tcp`
+- API: `3334/tcp` (localhost bound)
+
+## Miner Connection
+
+- Stratum URL: `stratum+tcp://<host>:3333`
+- Authorization format: `<HCASH_ADDRESS>.<worker>`
+- Expected address support:
+  - `hcash1...` bech32
+  - HCASH legacy base58 prefixes
+
+## Additional Docs
+
+- Setup and troubleshooting: [docs/HCASH_STRATUM_DOCKER.md](docs/HCASH_STRATUM_DOCKER.md)
+- Legacy full-stack examples: [full-setup/README.md](full-setup/README.md)
+
+## Development
+
 ```bash
-$ docker compose build
+npm install
+npm run build
+npm run start
 ```
-
-Run container:
-```bash
-$ docker compose up -d
-```
-
-The docker-compose binds to `127.0.0.1` by default. To expose the Stratum services on your server change:
-```diff
-    ports:
--      - "127.0.0.1:3333:3333/tcp"
--      - "127.0.0.1:3334:3334/tcp"
-+      - "3333"
-+      - "3334"
-```
-
-**note**: To successfully connect to the bitcoin RPC you will need to add
-
-```
-rpcallowip=172.16.0.0/12
-```
-
-to your bitcoin.conf.

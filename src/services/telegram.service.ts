@@ -1,10 +1,10 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { validate } from 'bitcoin-address-validation';
 import { Block } from 'bitcoinjs-lib';
 import * as TelegramBot from 'node-telegram-bot-api';
 
 import { TelegramSubscriptionsService } from '../ORM/telegram-subscriptions/telegram-subscriptions.service';
+import { isValidHcashAddress } from '../network/hcash-network';
 
 
 @Injectable()
@@ -34,7 +34,7 @@ export class TelegramService implements OnModuleInit {
 
         this.bot.onText(/\/subscribe/, async (msg) => {
             const address = msg.text.split('/subscribe ')[1];
-            if (validate(address) == false) {
+            if (isValidHcashAddress(address) == false) {
                 this.bot.sendMessage(msg.chat.id, "Invalid address.");
                 return;
             }

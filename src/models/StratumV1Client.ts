@@ -1,5 +1,4 @@
 import { ConfigService } from '@nestjs/config';
-import * as bitcoinjs from 'bitcoinjs-lib';
 import { plainToInstance } from 'class-transformer';
 import { validate, ValidatorOptions } from 'class-validator';
 import * as crypto from 'crypto';
@@ -28,6 +27,8 @@ import { SuggestDifficulty } from './stratum-messages/SuggestDifficultyMessage';
 import { StratumV1ClientStatistics } from './StratumV1ClientStatistics';
 import { ExternalSharesService } from '../services/external-shares.service';
 import { DifficultyUtils } from '../utils/difficulty.utils';
+import { warnIfNonHcashNetwork } from '../network/hcash-network';
+import { ChainProfile, getActiveChainProfile } from '../network/chain-profile';
 
 
 export class StratumV1Client {
@@ -42,7 +43,8 @@ export class StratumV1Client {
     private statistics: StratumV1ClientStatistics;
     private stratumInitialized = false;
     private usedSuggestedDifficulty = false;
-    private sessionDifficulty: number = 16384;
+    private readonly chainProfile: ChainProfile;
+    private sessionDifficulty: number;
 
     private entity: ClientEntity;
     private creatingEntity: Promise<void>;
@@ -68,6 +70,8 @@ export class StratumV1Client {
         private readonly addressSettingsService: AddressSettingsService,
         private readonly externalSharesService: ExternalSharesService
     ) {
+        this.chainProfile = getActiveChainProfile();
+        this.sessionDifficulty = this.chainProfile.stratumInitDiff;
 
         this.socket.on('data', (data: Buffer) => {
             this.buffer += data.toString();
@@ -87,6 +91,11 @@ export class StratumV1Client {
         });
 
 
+    }
+
+    private clampDifficulty(value: number): number {
+        const safeValue = Number.isFinite(value) ? value : this.chainProfile.stratumInitDiff;
+        return Math.max(this.chainProfile.stratumMinDiff, Math.min(safeValue, this.chainProfile.stratumMaxDiff));
     }
 
     public async destroy() {
@@ -145,7 +154,10 @@ export class StratumV1Client {
 
                     if (this.sessionStart == null) {
                         this.sessionStart = new Date();
-                        this.statistics = new StratumV1ClientStatistics(this.clientStatisticsService);
+                        this.statistics = new StratumV1ClientStatistics(this.clientStatisticsService, {
+                            minDiff: this.chainProfile.stratumMinDiff,
+                            targetSubmissionPerSecond: this.chainProfile.stratumTargetSharesPerSecond,
+                        });
                         this.extraNonceAndSessionId = this.getRandomHexString();
                         console.log(`New client ID: : ${this.extraNonceAndSessionId}, ${this.socket.remoteAddress}:${this.socket.remotePort}`);
                     }
@@ -265,7 +277,7 @@ export class StratumV1Client {
                 if (errors.length === 0) {
 
                     this.clientSuggestedDifficulty = suggestDifficultyMessage;
-                    this.sessionDifficulty = suggestDifficultyMessage.suggestedDifficulty;
+                    this.sessionDifficulty = this.clampDifficulty(suggestDifficultyMessage.suggestedDifficulty);
                     const success = await this.write(JSON.stringify(this.clientSuggestedDifficulty.response(this.sessionDifficulty)) + '\n');
                     if (!success) {
                         return;
@@ -355,7 +367,7 @@ export class StratumV1Client {
 
         switch (this.clientSubscription.userAgent) {
             case 'cpuminer': {
-                this.sessionDifficulty = 0.1;
+                this.sessionDifficulty = this.clampDifficulty(0.1);
             }
         }
 
@@ -392,6 +404,12 @@ export class StratumV1Client {
 
         let payoutInformation;
         const devFeeAddress = this.configService.get('DEV_FEE_ADDRESS');
+        const devFeePercentRaw = this.configService.get('DEV_FEE_PERCENT');
+        const parsedDevFeePercent = Number.parseFloat(`${devFeePercentRaw ?? ''}`);
+        const devFeePercent = Number.isFinite(parsedDevFeePercent) && parsedDevFeePercent > 0 && parsedDevFeePercent < 100
+            ? parsedDevFeePercent
+            : 1.5;
+        const minerPercent = 100 - devFeePercent;
         //50Th/s
         this.noFee = false;
         if (this.entity) {
@@ -405,27 +423,16 @@ export class StratumV1Client {
 
         } else {
             payoutInformation = [
-                { address: devFeeAddress, percent: 1.5 },
-                { address: this.clientAuthorization.address, percent: 98.5 }
+                { address: devFeeAddress, percent: devFeePercent },
+                { address: this.clientAuthorization.address, percent: minerPercent }
             ];
         }
 
         const networkConfig = this.configService.get('NETWORK');
-        let network;
-
-        if (networkConfig === 'mainnet') {
-            network = bitcoinjs.networks.bitcoin;
-        } else if (networkConfig === 'testnet') {
-            network = bitcoinjs.networks.testnet;
-        } else if (networkConfig === 'regtest') {
-            network = bitcoinjs.networks.regtest;
-        } else {
-            throw new Error('Invalid network configuration');
-        }
+        warnIfNonHcashNetwork(networkConfig);
 
         const job = new MiningJob(
             this.configService,
-            network,
             this.stratumV1JobsService.getNextId(),
             payoutInformation,
             jobTemplate
@@ -599,12 +606,12 @@ export class StratumV1Client {
 
         if (targetDiff != this.sessionDifficulty) {
             //console.log(`Adjusting ${this.extraNonceAndSessionId} difficulty from ${this.sessionDifficulty} to ${targetDiff}`);
-            this.sessionDifficulty = targetDiff;
+            this.sessionDifficulty = this.clampDifficulty(targetDiff);
 
             const data = JSON.stringify({
                 id: null,
                 method: eResponseMethod.SET_DIFFICULTY,
-                params: [targetDiff]
+                params: [this.sessionDifficulty]
             }) + '\n';
 
 
