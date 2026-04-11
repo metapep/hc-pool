@@ -62,6 +62,13 @@ Ports:
   - `hcash1...` bech32
   - HCASH legacy base58 prefixes
 
+## Pool Fee Config
+
+- `DEV_FEE_ADDRESS`: fee payout address.
+- `DEV_FEE_PERCENT`: fee percentage (0 < fee < 100, defaults to `1.5` if invalid).
+- If `DEV_FEE_ADDRESS` is set, the fee split is applied on every template.
+- If `DEV_FEE_ADDRESS` is empty, payout remains `100%` to the miner address.
+
 ## Additional Docs
 
 - Setup and troubleshooting: [docs/HCASH_STRATUM_DOCKER.md](docs/HCASH_STRATUM_DOCKER.md)

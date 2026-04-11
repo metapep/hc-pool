@@ -410,13 +410,11 @@ export class StratumV1Client {
             ? parsedDevFeePercent
             : 1.5;
         const minerPercent = 100 - devFeePercent;
-        //50Th/s
-        this.noFee = false;
         if (this.entity) {
             this.hashRate = this.statistics.hashRate;
-            this.noFee = this.hashRate != 0 && this.hashRate < 50000000000000;
         }
-        if (this.noFee || devFeeAddress == null || devFeeAddress.length < 1) {
+        this.noFee = devFeeAddress == null || devFeeAddress.length < 1;
+        if (this.noFee) {
             payoutInformation = [
                 { address: this.clientAuthorization.address, percent: 100 }
             ];
