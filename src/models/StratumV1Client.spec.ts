@@ -136,6 +136,7 @@ describe('StratumV1Client', () => {
       authorizeMining: jest.fn().mockResolvedValue({ allowed: true }),
     };
     const signetBlockSigningService: any = {
+      isEnabled: jest.fn().mockReturnValue(false),
       signBlock: jest.fn((block) => block),
     };
 

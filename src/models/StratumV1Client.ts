@@ -83,6 +83,7 @@ export class StratumV1Client {
   private buffer = '';
 
   private miningSubmissionHashes = new Set<string>();
+  private readonly signetLockedExtraNonce2: string;
 
   constructor(
     public readonly socket: Socket,
@@ -102,6 +103,9 @@ export class StratumV1Client {
     this.sessionDifficulty = this.chainProfile.stratumInitDiff;
     this.requiresDeviceAuth = this.miningAuthzService.isEnabled();
     this.deviceAuthorized = !this.requiresDeviceAuth;
+    this.signetLockedExtraNonce2 = this.normalizeSignetExtraNonce2(
+      this.configService.get('SIGNET_LOCKED_EXTRANONCE2'),
+    );
 
     this.socket.on('data', (data: Buffer) => {
       this.buffer += data.toString();
@@ -129,6 +133,19 @@ export class StratumV1Client {
       this.chainProfile.stratumMinDiff,
       Math.min(safeValue, this.chainProfile.stratumMaxDiff),
     );
+  }
+
+  private normalizeSignetExtraNonce2(rawValue: string | undefined): string {
+    const candidate = `${rawValue ?? ''}`.trim().toLowerCase();
+    if (/^[0-9a-f]{8}$/.test(candidate)) {
+      return candidate;
+    }
+    return '00000001';
+  }
+
+  private parseHexInt(value: string | null | undefined): number {
+    const parsed = Number.parseInt(value ?? '0', 16);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   private parseDeviceChallengeMessage(
@@ -748,6 +765,8 @@ export class StratumV1Client {
       jobTemplate,
     );
 
+    await this.prepareSignetLockedJob(job, jobTemplate);
+
     this.stratumV1JobsService.addJob(job);
 
     const success = await this.write(job.response(jobTemplate));
@@ -756,6 +775,39 @@ export class StratumV1Client {
     }
 
     //console.log(`Sent new job to ${this.clientAuthorization.worker}.${this.extraNonceAndSessionId}. (clearJobs: ${jobTemplate.blockData.clearJobs}, fee?: ${!this.noFee})`)
+  }
+
+  private async prepareSignetLockedJob(
+    job: MiningJob,
+    jobTemplate: IJobTemplate,
+  ) {
+    if (!this.signetBlockSigningService.isEnabled()) {
+      return;
+    }
+
+    const lockedVersionMask = 0;
+    const lockedNonce = 0;
+    const lockedNtime = jobTemplate.block.timestamp;
+
+    const preSignedBlock = job.copyAndUpdateBlock(
+      jobTemplate,
+      lockedVersionMask,
+      lockedNonce,
+      this.extraNonceAndSessionId,
+      this.signetLockedExtraNonce2,
+      lockedNtime,
+    );
+
+    const signetReadyBlock = this.signetBlockSigningService.signBlock(
+      preSignedBlock,
+      jobTemplate.blockData.signetChallenge,
+    );
+
+    job.applySignedCoinbase(signetReadyBlock.transactions[0], {
+      extraNonce2: this.signetLockedExtraNonce2,
+      ntime: lockedNtime,
+      versionMask: lockedVersionMask,
+    });
   }
 
   private async handleMiningSubmission(submission: MiningSubmitMessage) {
@@ -853,13 +905,35 @@ export class StratumV1Client {
       return false;
     }
 
+    const submissionVersionMask = this.parseHexInt(submission.versionMask);
+    const submissionNtime = this.parseHexInt(submission.ntime);
+
+    if (
+      !job.matchesLockedSubmission(
+        submission.extraNonce2,
+        submissionNtime,
+        submissionVersionMask,
+      )
+    ) {
+      const err = new StratumErrorMessage(
+        submission.id,
+        eStratumErrorCode.JobNotFound,
+        'Job parameters changed',
+      ).response();
+      const success = await this.write(err);
+      if (!success) {
+        return false;
+      }
+      return false;
+    }
+
     const updatedJobBlock = job.copyAndUpdateBlock(
       jobTemplate,
-      parseInt(submission.versionMask, 16),
-      parseInt(submission.nonce, 16),
+      submissionVersionMask,
+      this.parseHexInt(submission.nonce),
       this.extraNonceAndSessionId,
       submission.extraNonce2,
-      parseInt(submission.ntime, 16),
+      submissionNtime,
     );
     const header = updatedJobBlock.toBuffer(true);
     const { submissionDifficulty } =
@@ -874,42 +948,26 @@ export class StratumV1Client {
         !templateIsStale &&
         submissionDifficulty >= unsignedNetworkDifficulty
       ) {
-        const signetReadyBlock = this.signetBlockSigningService.signBlock(
-          updatedJobBlock,
-          jobTemplate.blockData.signetChallenge,
-        );
-        const signedHeader = signetReadyBlock.toBuffer(true);
-        const { submissionDifficulty: signedSubmissionDifficulty } =
-          DifficultyUtils.calculateDifficulty(signedHeader);
-        const signedNetworkDifficulty =
-          DifficultyUtils.calculateDifficultyFromBits(signetReadyBlock.bits);
+        const blockHex = updatedJobBlock.toHex(false);
+        const result = await this.bitcoinRpcService.SUBMIT_BLOCK(blockHex);
+        const submitAccepted = result == null || result === 'SUCCESS!';
+        if (submitAccepted) {
+          console.log('!!! BLOCK FOUND !!!');
+          await this.blocksService.save({
+            height: jobTemplate.blockData.height,
+            minerAddress: this.clientAuthorization.address,
+            worker: this.clientAuthorization.worker,
+            sessionId: this.extraNonceAndSessionId,
+            blockData: blockHex,
+          });
 
-        if (signedSubmissionDifficulty >= signedNetworkDifficulty) {
-          const blockHex = signetReadyBlock.toHex(false);
-          const result = await this.bitcoinRpcService.SUBMIT_BLOCK(blockHex);
-          const submitAccepted = result == null || result === 'SUCCESS!';
-          if (submitAccepted) {
-            console.log('!!! BLOCK FOUND !!!');
-            await this.blocksService.save({
-              height: jobTemplate.blockData.height,
-              minerAddress: this.clientAuthorization.address,
-              worker: this.clientAuthorization.worker,
-              sessionId: this.extraNonceAndSessionId,
-              blockData: blockHex,
-            });
-
-            await this.notificationService.notifySubscribersBlockFound(
-              this.clientAuthorization.address,
-              jobTemplate.blockData.height,
-              signetReadyBlock,
-              result,
-            );
-            await this.addressSettingsService.resetBestDifficultyAndShares();
-          }
-        } else {
-          console.warn(
-            `Discarded candidate after signet signing (session ${this.extraNonceAndSessionId}): signedDifficulty=${signedSubmissionDifficulty}, networkDifficulty=${signedNetworkDifficulty}`,
+          await this.notificationService.notifySubscribersBlockFound(
+            this.clientAuthorization.address,
+            jobTemplate.blockData.height,
+            updatedJobBlock,
+            result,
           );
+          await this.addressSettingsService.resetBestDifficultyAndShares();
         }
       }
       try {

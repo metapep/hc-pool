@@ -55,6 +55,10 @@ export class SignetBlockSigningService {
       : this.challengeScript.toString('hex');
   }
 
+  public isEnabled(): boolean {
+    return this.enabled;
+  }
+
   public signBlock(
     block: bitcoinjs.Block,
     signetChallengeHex?: string,
