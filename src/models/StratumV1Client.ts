@@ -957,7 +957,7 @@ export class StratumV1Client {
       submissionNtime,
     );
     const header = updatedJobBlock.toBuffer(true);
-    const { submissionDifficulty } =
+    const { submissionDifficulty, submissionHash } =
       DifficultyUtils.calculateDifficulty(header);
     const unsignedNetworkDifficulty =
       DifficultyUtils.calculateDifficultyFromBits(updatedJobBlock.bits);
@@ -1057,6 +1057,19 @@ export class StratumV1Client {
         });
       }
     } else {
+      console.warn(
+        `Low-diff share reject session=${this.extraNonceAndSessionId} worker=${
+          this.clientAuthorization?.worker ?? 'unknown'
+        } job=${submission.jobId} nonce=${submission.nonce} ntime=${
+          submission.ntime
+        } ex2=${submission.extraNonce2} vmask=${
+          submission.versionMask ?? '0'
+        } poolDiff=${this.sessionDifficulty.toFixed(
+          12,
+        )} shareDiff=${submissionDifficulty.toFixed(
+          12,
+        )} shareHash=${submissionHash}`,
+      );
       const err = new StratumErrorMessage(
         submission.id,
         eStratumErrorCode.LowDifficultyShare,
