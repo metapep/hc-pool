@@ -821,6 +821,37 @@ export class StratumV1Client {
     const jobTemplate = this.stratumV1JobsService.getJobTemplateById(
       job.jobTemplateId,
     );
+    if (jobTemplate == null) {
+      const err = new StratumErrorMessage(
+        submission.id,
+        eStratumErrorCode.JobNotFound,
+        'Job template not found',
+      ).response();
+      const success = await this.write(err);
+      if (!success) {
+        return false;
+      }
+      return false;
+    }
+
+    const templateIsStale = this.stratumV1JobsService.isTemplateStale(
+      job.jobTemplateId,
+    );
+    if (
+      templateIsStale &&
+      !this.stratumV1JobsService.isTemplateWithinGraceWindow(job.jobTemplateId)
+    ) {
+      const err = new StratumErrorMessage(
+        submission.id,
+        eStratumErrorCode.JobNotFound,
+        'Job stale',
+      ).response();
+      const success = await this.write(err);
+      if (!success) {
+        return false;
+      }
+      return false;
+    }
 
     const updatedJobBlock = job.copyAndUpdateBlock(
       jobTemplate,
@@ -839,7 +870,10 @@ export class StratumV1Client {
     //console.log(`DIFF: ${submissionDifficulty} of ${this.sessionDifficulty} from ${this.clientAuthorization.worker + '.' + this.extraNonceAndSessionId}`);
 
     if (submissionDifficulty >= this.sessionDifficulty) {
-      if (submissionDifficulty >= unsignedNetworkDifficulty) {
+      if (
+        !templateIsStale &&
+        submissionDifficulty >= unsignedNetworkDifficulty
+      ) {
         const signetReadyBlock = this.signetBlockSigningService.signBlock(
           updatedJobBlock,
           jobTemplate.blockData.signetChallenge,

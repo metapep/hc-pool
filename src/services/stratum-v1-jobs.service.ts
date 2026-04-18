@@ -43,6 +43,11 @@ export class StratumV1JobsService {
   private lastIntervalCount: number;
   private skipNext = false;
   private readonly chainProfile = getActiveChainProfile();
+  private readonly stateTtlMs = 1000 * 60 * 5;
+  private readonly staleJobGraceMs = this.parseGraceMs(
+    process.env.STRATUM_STALE_JOB_GRACE_MS,
+    1500,
+  );
   public newMiningJob$: Observable<IJobTemplate>;
 
   public latestJobId = 1;
@@ -51,6 +56,7 @@ export class StratumV1JobsService {
   public jobs: { [jobId: string]: MiningJob } = {};
 
   public blocks: { [id: number]: IJobTemplate } = {};
+  private staleTemplateSinceMs: { [templateId: string]: number } = {};
 
   // offset the interval so that all the cluster processes don't try and refresh at the same time.
   private delay =
@@ -186,31 +192,55 @@ export class StratumV1JobsService {
         },
       ),
       tap((data) => {
+        const now = new Date().getTime();
         if (data.blockData.clearJobs) {
-          this.blocks = {};
-          this.jobs = {};
-        } else {
-          const now = new Date().getTime();
-          // Delete old templates (5 minutes)
-          for (const templateId in this.blocks) {
-            if (
-              now - this.blocks[templateId].blockData.creation >
-              1000 * 60 * 5
-            ) {
-              delete this.blocks[templateId];
-            }
-          }
-          // Delete old jobs (5 minutes)
-          for (const jobId in this.jobs) {
-            if (now - this.jobs[jobId].creation > 1000 * 60 * 5) {
-              delete this.jobs[jobId];
-            }
-          }
+          this.markTemplatesStale(now);
         }
+
+        // Keep stale jobs/templates briefly to absorb in-flight submit races.
+        // This avoids false "Job not found" errors under high notify churn.
+        this.pruneOldState(now);
         this.blocks[data.blockData.id] = data;
       }),
       shareReplay({ refCount: true, bufferSize: 1 }),
     );
+  }
+
+  private parseGraceMs(rawValue: string | undefined, defaultValue: number) {
+    if (rawValue == null || rawValue.trim().length === 0) {
+      return defaultValue;
+    }
+    const parsed = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return defaultValue;
+    }
+    return parsed;
+  }
+
+  private markTemplatesStale(nowMs: number) {
+    for (const templateId in this.blocks) {
+      if (this.staleTemplateSinceMs[templateId] == null) {
+        this.staleTemplateSinceMs[templateId] = nowMs;
+      }
+    }
+  }
+
+  private pruneOldState(nowMs: number) {
+    for (const templateId in this.blocks) {
+      if (
+        nowMs - this.blocks[templateId].blockData.creation >
+        this.stateTtlMs
+      ) {
+        delete this.blocks[templateId];
+        delete this.staleTemplateSinceMs[templateId];
+      }
+    }
+
+    for (const jobId in this.jobs) {
+      if (nowMs - this.jobs[jobId].creation > this.stateTtlMs) {
+        delete this.jobs[jobId];
+      }
+    }
   }
 
   private calculateNetworkDifficulty(nBits: number) {
@@ -253,6 +283,22 @@ export class StratumV1JobsService {
 
   public getJobById(jobId: string) {
     return this.jobs[jobId];
+  }
+
+  public isTemplateStale(jobTemplateId: string): boolean {
+    return this.staleTemplateSinceMs[jobTemplateId] != null;
+  }
+
+  public isTemplateWithinGraceWindow(jobTemplateId: string): boolean {
+    const staleSince = this.staleTemplateSinceMs[jobTemplateId];
+    if (staleSince == null) {
+      return false;
+    }
+    return new Date().getTime() - staleSince <= this.staleJobGraceMs;
+  }
+
+  public getStaleJobGraceMs(): number {
+    return this.staleJobGraceMs;
   }
 
   public getNextTemplateId() {
