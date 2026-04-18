@@ -833,35 +833,49 @@ export class StratumV1Client {
     const header = updatedJobBlock.toBuffer(true);
     const { submissionDifficulty } =
       DifficultyUtils.calculateDifficulty(header);
+    const unsignedNetworkDifficulty =
+      DifficultyUtils.calculateDifficultyFromBits(updatedJobBlock.bits);
 
     //console.log(`DIFF: ${submissionDifficulty} of ${this.sessionDifficulty} from ${this.clientAuthorization.worker + '.' + this.extraNonceAndSessionId}`);
 
     if (submissionDifficulty >= this.sessionDifficulty) {
-      if (submissionDifficulty >= jobTemplate.blockData.networkDifficulty) {
-        console.log('!!! BLOCK FOUND !!!');
+      if (submissionDifficulty >= unsignedNetworkDifficulty) {
         const signetReadyBlock = this.signetBlockSigningService.signBlock(
           updatedJobBlock,
           jobTemplate.blockData.signetChallenge,
         );
-        const blockHex = signetReadyBlock.toHex(false);
-        const result = await this.bitcoinRpcService.SUBMIT_BLOCK(blockHex);
-        await this.blocksService.save({
-          height: jobTemplate.blockData.height,
-          minerAddress: this.clientAuthorization.address,
-          worker: this.clientAuthorization.worker,
-          sessionId: this.extraNonceAndSessionId,
-          blockData: blockHex,
-        });
+        const signedHeader = signetReadyBlock.toBuffer(true);
+        const { submissionDifficulty: signedSubmissionDifficulty } =
+          DifficultyUtils.calculateDifficulty(signedHeader);
+        const signedNetworkDifficulty =
+          DifficultyUtils.calculateDifficultyFromBits(signetReadyBlock.bits);
 
-        await this.notificationService.notifySubscribersBlockFound(
-          this.clientAuthorization.address,
-          jobTemplate.blockData.height,
-          signetReadyBlock,
-          result,
-        );
-        //success
-        if (result == null) {
-          await this.addressSettingsService.resetBestDifficultyAndShares();
+        if (signedSubmissionDifficulty >= signedNetworkDifficulty) {
+          const blockHex = signetReadyBlock.toHex(false);
+          const result = await this.bitcoinRpcService.SUBMIT_BLOCK(blockHex);
+          const submitAccepted = result == null || result === 'SUCCESS!';
+          if (submitAccepted) {
+            console.log('!!! BLOCK FOUND !!!');
+            await this.blocksService.save({
+              height: jobTemplate.blockData.height,
+              minerAddress: this.clientAuthorization.address,
+              worker: this.clientAuthorization.worker,
+              sessionId: this.extraNonceAndSessionId,
+              blockData: blockHex,
+            });
+
+            await this.notificationService.notifySubscribersBlockFound(
+              this.clientAuthorization.address,
+              jobTemplate.blockData.height,
+              signetReadyBlock,
+              result,
+            );
+            await this.addressSettingsService.resetBestDifficultyAndShares();
+          }
+        } else {
+          console.warn(
+            `Discarded candidate after signet signing (session ${this.extraNonceAndSessionId}): signedDifficulty=${signedSubmissionDifficulty}, networkDifficulty=${signedNetworkDifficulty}`,
+          );
         }
       }
       try {
