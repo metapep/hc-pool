@@ -236,6 +236,9 @@ export class StratumV1Client {
   public async destroy() {
     if (this.extraNonceAndSessionId) {
       await this.clientService.delete(this.extraNonceAndSessionId);
+      this.stratumV1JobsService.removeJobsBySession(
+        this.extraNonceAndSessionId,
+      );
     }
 
     if (this.stratumSubscription != null) {
@@ -761,6 +764,7 @@ export class StratumV1Client {
     const job = new MiningJob(
       this.configService,
       this.stratumV1JobsService.getNextId(),
+      this.extraNonceAndSessionId,
       payoutInformation,
       jobTemplate,
     );
@@ -870,6 +874,23 @@ export class StratumV1Client {
       }
       return false;
     }
+
+    if (job.ownerSessionId !== this.extraNonceAndSessionId) {
+      console.warn(
+        `Rejecting stale job ${submission.jobId}: session mismatch jobOwner=${job.ownerSessionId} current=${this.extraNonceAndSessionId}`,
+      );
+      const err = new StratumErrorMessage(
+        submission.id,
+        eStratumErrorCode.JobNotFound,
+        'Job not found',
+      ).response();
+      const success = await this.write(err);
+      if (!success) {
+        return false;
+      }
+      return false;
+    }
+
     const jobTemplate = this.stratumV1JobsService.getJobTemplateById(
       job.jobTemplateId,
     );
@@ -931,7 +952,7 @@ export class StratumV1Client {
       jobTemplate,
       submissionVersionMask,
       this.parseHexInt(submission.nonce),
-      this.extraNonceAndSessionId,
+      job.ownerSessionId,
       submission.extraNonce2,
       submissionNtime,
     );

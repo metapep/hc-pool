@@ -95,7 +95,7 @@ describe('MiningJob', () => {
         it('should create a new MiningJob if POOL_IDENTIFIER is not set and use the default', () => {
             const expectedMiningIdentifier = 'Public-Pool';
             expect(jobTemplate.block).toBeDefined();
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
 
             const response = JSON.parse(miningJob.response(jobTemplate));
 
@@ -118,7 +118,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
             expect(response.params[3]).toContain(Buffer.from(bootstrapMessage, 'utf8').toString('hex'));
         });
@@ -137,7 +137,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
             expect(response.params[3]).not.toContain(Buffer.from(bootstrapMessage, 'utf8').toString('hex'));
         });
@@ -152,7 +152,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
@@ -171,7 +171,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
@@ -190,7 +190,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);
@@ -208,7 +208,7 @@ describe('MiningJob', () => {
                 return null;
             });
 
-            const miningJob = new MiningJob(configService, '1', payoutInformation, jobTemplate);
+            const miningJob = new MiningJob(configService, '1', 'deadbeef', payoutInformation, jobTemplate);
             const response = JSON.parse(miningJob.response(jobTemplate));
 
             const miningIdentifier = extractPoolIdentifierFromScript(response.params[2]);

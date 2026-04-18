@@ -285,6 +285,14 @@ export class StratumV1JobsService {
     return this.jobs[jobId];
   }
 
+  public removeJobsBySession(sessionId: string) {
+    for (const jobId in this.jobs) {
+      if (this.jobs[jobId].ownerSessionId === sessionId) {
+        delete this.jobs[jobId];
+      }
+    }
+  }
+
   public isTemplateStale(jobTemplateId: string): boolean {
     return this.staleTemplateSinceMs[jobTemplateId] != null;
   }

@@ -22,6 +22,7 @@ export class MiningJob {
   public jobTemplateId: string;
   public networkDifficulty: number;
   public creation: number;
+  public ownerSessionId: string;
   public signetLocked = false;
   public lockedExtraNonce2?: string;
   public lockedNtime?: number;
@@ -30,10 +31,12 @@ export class MiningJob {
   constructor(
     configService: ConfigService,
     public jobId: string,
+    ownerSessionId: string,
     payoutInformation: AddressObject[],
     jobTemplate: IJobTemplate,
   ) {
     this.creation = new Date().getTime();
+    this.ownerSessionId = ownerSessionId;
     this.jobTemplateId = jobTemplate.blockData.id;
 
     this.coinbaseTransaction = this.createCoinbaseTransaction(
