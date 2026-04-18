@@ -27,57 +27,56 @@ import { TelegramService } from './services/telegram.service';
 import { ExternalSharesService } from './services/external-shares.service';
 import { ExternalShareController } from './controllers/external-share/external-share.controller';
 import { ExternalSharesModule } from './ORM/external-shares/external-shares.module';
+import { MiningAuthzService } from './services/mining-authz.service';
+import { SignetBlockSigningService } from './services/signet-block-signing.service';
 
 const ORMModules = [
-    ClientStatisticsModule,
-    ClientModule,
-    AddressSettingsModule,
-    TelegramSubscriptionsModule,
-    BlocksModule,
-    RpcBlocksModule,
-    ExternalSharesModule
-]
+  ClientStatisticsModule,
+  ClientModule,
+  AddressSettingsModule,
+  TelegramSubscriptionsModule,
+  BlocksModule,
+  RpcBlocksModule,
+  ExternalSharesModule,
+];
 
 @Module({
-    imports: [
-        ConfigModule.forRoot(),
-        TypeOrmModule.forRoot({
-            type: 'sqlite',
-            database: './DB/public-pool.sqlite',
-            synchronize: true,
-            autoLoadEntities: true,
-            logging: false,
-            enableWAL: true,
-            busyTimeout: 30 * 1000,
-
-        }),
-        CacheModule.register(),
-        ScheduleModule.forRoot(),
-        HttpModule,
-        ...ORMModules
-    ],
-    controllers: [
-        AppController,
-        ClientController,
-        AddressController,
-        ExternalShareController
-    ],
-    providers: [
-        DiscordService,
-        AppService,
-        StratumV1Service,
-        TelegramService,
-        BitcoinRpcService,
-        NotificationService,
-        BitcoinAddressValidator,
-        StratumV1JobsService,
-        BTCPayService,
-        BraiinsService,
-        ExternalSharesService,
-    ],
+  imports: [
+    ConfigModule.forRoot(),
+    TypeOrmModule.forRoot({
+      type: 'sqlite',
+      database: './DB/public-pool.sqlite',
+      synchronize: true,
+      autoLoadEntities: true,
+      logging: false,
+      enableWAL: true,
+      busyTimeout: 30 * 1000,
+    }),
+    CacheModule.register(),
+    ScheduleModule.forRoot(),
+    HttpModule,
+    ...ORMModules,
+  ],
+  controllers: [
+    AppController,
+    ClientController,
+    AddressController,
+    ExternalShareController,
+  ],
+  providers: [
+    DiscordService,
+    AppService,
+    StratumV1Service,
+    TelegramService,
+    BitcoinRpcService,
+    NotificationService,
+    BitcoinAddressValidator,
+    StratumV1JobsService,
+    BTCPayService,
+    BraiinsService,
+    ExternalSharesService,
+    MiningAuthzService,
+    SignetBlockSigningService,
+  ],
 })
-export class AppModule {
-    constructor() {
-
-    }
-}
+export class AppModule {}
