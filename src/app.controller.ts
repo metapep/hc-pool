@@ -9,10 +9,10 @@ import { ClientStatisticsService } from './ORM/client-statistics/client-statisti
 import { ClientService } from './ORM/client/client.service';
 import { getActiveChainProfile } from './network/chain-profile';
 import { BitcoinRpcService } from './services/bitcoin-rpc.service';
+import { MiningSessionMetricsService } from './services/mining-session-metrics.service';
 
 @Controller()
 export class AppController {
-
   private uptime = new Date();
   private static readonly HALVING_BLOCKS = 210000;
 
@@ -23,19 +23,17 @@ export class AppController {
     private readonly blocksService: BlocksService,
     private readonly bitcoinRpcService: BitcoinRpcService,
     private readonly addressSettingsService: AddressSettingsService,
-  ) { }
+    private readonly miningSessionMetricsService: MiningSessionMetricsService,
+  ) {}
 
   @Get('info')
   public async info() {
-
-
     const CACHE_KEY = 'SITE_INFO';
     const cachedResult = await this.cacheManager.get(CACHE_KEY);
 
     if (cachedResult != null) {
       return cachedResult;
     }
-
 
     const blockData = await this.blocksService.getFoundBlocks();
     const userAgents = await this.clientService.getUserAgents();
@@ -45,19 +43,17 @@ export class AppController {
       blockData,
       userAgents,
       highScores,
-      uptime: this.uptime
+      uptime: this.uptime,
     };
 
     //1 min
     await this.cacheManager.set(CACHE_KEY, data, 1 * 60 * 1000);
 
     return data;
-
   }
 
   @Get('pool')
   public async pool() {
-
     const CACHE_KEY = 'POOL_INFO';
     const cachedResult = await this.cacheManager.get(CACHE_KEY);
 
@@ -65,26 +61,38 @@ export class AppController {
       return cachedResult;
     }
 
-
     const userAgents = await this.clientService.getUserAgents();
-    const totalHashRate = userAgents.reduce((acc, userAgent) => acc + parseFloat(userAgent.totalHashRate), 0);
-    const totalMiners = userAgents.reduce((acc, userAgent) => acc + parseInt(userAgent.count), 0);
-    const blockHeight = (await firstValueFrom(this.bitcoinRpcService.newBlock$)).blocks;
+    const totalHashRate = userAgents.reduce(
+      (acc, userAgent) => acc + parseFloat(userAgent.totalHashRate),
+      0,
+    );
+    const totalMiners = userAgents.reduce(
+      (acc, userAgent) => acc + parseInt(userAgent.count),
+      0,
+    );
+    const blockHeight = (await firstValueFrom(this.bitcoinRpcService.newBlock$))
+      .blocks;
     const blocksFound = await this.blocksService.getFoundBlocks();
     const devFeeAddress = `${process.env.DEV_FEE_ADDRESS ?? ''}`.trim();
-    const parsedDevFeePercent = Number.parseFloat(`${process.env.DEV_FEE_PERCENT ?? ''}`);
-    const configuredFeePercent = Number.isFinite(parsedDevFeePercent) && parsedDevFeePercent > 0 && parsedDevFeePercent < 100
-      ? parsedDevFeePercent
-      : 1.5;
-    const effectiveFeePercent = devFeeAddress.length > 0 ? configuredFeePercent : 0;
+    const parsedDevFeePercent = Number.parseFloat(
+      `${process.env.DEV_FEE_PERCENT ?? ''}`,
+    );
+    const configuredFeePercent =
+      Number.isFinite(parsedDevFeePercent) &&
+      parsedDevFeePercent > 0 &&
+      parsedDevFeePercent < 100
+        ? parsedDevFeePercent
+        : 1.5;
+    const effectiveFeePercent =
+      devFeeAddress.length > 0 ? configuredFeePercent : 0;
 
     const data = {
       totalHashRate,
       blockHeight,
       totalMiners,
       blocksFound,
-      fee: effectiveFeePercent
-    }
+      fee: effectiveFeePercent,
+    };
 
     //5 min
     await this.cacheManager.set(CACHE_KEY, data, 5 * 60 * 1000);
@@ -96,6 +104,16 @@ export class AppController {
   public async network() {
     const miningInfo = await firstValueFrom(this.bitcoinRpcService.newBlock$);
     return miningInfo;
+  }
+
+  @Get('mining/authz/metrics')
+  public async miningAuthzMetrics() {
+    const connectedMiners = await this.clientService.connectedClientCount();
+    const snapshot = this.miningSessionMetricsService.snapshot();
+    return {
+      connectedMiners,
+      ...snapshot,
+    };
   }
 
   @Get('network/stats')
@@ -136,12 +154,21 @@ export class AppController {
       this.clientStatisticsService.getShareSnapshot(15),
     ]);
 
-    const totalHashRate = userAgents.reduce((acc, userAgent) => acc + Number.parseFloat(userAgent.totalHashRate ?? '0'), 0);
-    const totalMiners = userAgents.reduce((acc, userAgent) => acc + Number.parseInt(userAgent.count ?? '0', 10), 0);
+    const totalHashRate = userAgents.reduce(
+      (acc, userAgent) =>
+        acc + Number.parseFloat(userAgent.totalHashRate ?? '0'),
+      0,
+    );
+    const totalMiners = userAgents.reduce(
+      (acc, userAgent) => acc + Number.parseInt(userAgent.count ?? '0', 10),
+      0,
+    );
 
     const sessions = activeClients.map((client) => {
-      const heartbeatAt = client.updatedAt != null ? new Date(client.updatedAt) : null;
-      const heartbeatValid = heartbeatAt != null && Number.isFinite(heartbeatAt.getTime());
+      const heartbeatAt =
+        client.updatedAt != null ? new Date(client.updatedAt) : null;
+      const heartbeatValid =
+        heartbeatAt != null && Number.isFinite(heartbeatAt.getTime());
       const lastHeartbeatAt = heartbeatValid ? heartbeatAt.toISOString() : null;
       const secondsSinceLastHeartbeat = heartbeatValid
         ? Math.max(0, Math.floor((nowMs - heartbeatAt.getTime()) / 1000))
@@ -154,7 +181,10 @@ export class AppController {
         userAgent: client.userAgent,
         hashRate: Number(client.hashRate ?? 0),
         bestDifficulty: Number(client.bestDifficulty ?? 0),
-        startTime: client.startTime != null ? new Date(client.startTime).toISOString() : null,
+        startTime:
+          client.startTime != null
+            ? new Date(client.startTime).toISOString()
+            : null,
         lastHeartbeatAt,
         secondsSinceLastHeartbeat,
       };
@@ -200,9 +230,12 @@ export class AppController {
 
     const miningInfo = await firstValueFrom(this.bitcoinRpcService.newBlock$);
     const blockHeight = Number(miningInfo?.blocks ?? 0);
-    const blocksTillHalving = blockHeight > 0
-      ? (((Math.floor(blockHeight / AppController.HALVING_BLOCKS) + 1) * AppController.HALVING_BLOCKS) - blockHeight)
-      : 0;
+    const blocksTillHalving =
+      blockHeight > 0
+        ? (Math.floor(blockHeight / AppController.HALVING_BLOCKS) + 1) *
+            AppController.HALVING_BLOCKS -
+          blockHeight
+        : 0;
 
     const mediumFeeSatVb = await this.bitcoinRpcService.getMediumFeeSatVb();
 
@@ -222,8 +255,6 @@ export class AppController {
 
   @Get('info/chart')
   public async infoChart() {
-
-
     const CACHE_KEY = 'SITE_HASHRATE_GRAPH';
     const cachedResult = await this.cacheManager.get(CACHE_KEY);
 
@@ -237,8 +268,5 @@ export class AppController {
     await this.cacheManager.set(CACHE_KEY, chartData, 10 * 60 * 1000);
 
     return chartData;
-
-
   }
-
 }

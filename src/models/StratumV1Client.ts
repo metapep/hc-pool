@@ -38,6 +38,7 @@ import {
   PoolChallenge,
 } from '../services/mining-authz.service';
 import { SignetBlockSigningService } from '../services/signet-block-signing.service';
+import { MiningSessionMetricsService } from '../services/mining-session-metrics.service';
 
 interface DeviceChallengeMessage {
   id: string | number | null;
@@ -68,9 +69,9 @@ export class StratumV1Client {
   private deviceAuthorized = false;
   private pendingChallenge?: PoolChallenge & {
     deviceId: string;
-    wallet: string;
+    payoutWalletHcash: string;
   };
-  private deviceSession?: { deviceId: string; wallet: string };
+  private deviceSession?: { deviceId: string; payoutWalletHcash: string };
 
   private entity: ClientEntity;
   private creatingEntity: Promise<void>;
@@ -97,6 +98,7 @@ export class StratumV1Client {
     private readonly addressSettingsService: AddressSettingsService,
     private readonly externalSharesService: ExternalSharesService,
     private readonly miningAuthzService: MiningAuthzService,
+    private readonly miningSessionMetricsService: MiningSessionMetricsService,
     private readonly signetBlockSigningService: SignetBlockSigningService,
   ) {
     this.chainProfile = getActiveChainProfile();
@@ -200,6 +202,19 @@ export class StratumV1Client {
     };
   }
 
+  private recordAuthFailure(stage: string, reason: string): void {
+    this.miningSessionMetricsService.recordFailure(stage, reason);
+    console.warn(
+      `Device auth failure [${stage}] session=${
+        this.extraNonceAndSessionId ?? 'unknown'
+      } reason=${reason} remote=${this.socket.remoteAddress ?? 'unknown'}`,
+    );
+  }
+
+  private recordAuthSuccess(stage: string): void {
+    this.miningSessionMetricsService.recordSuccess(stage);
+  }
+
   private async isSessionAuthorized(): Promise<boolean> {
     if (!this.requiresDeviceAuth) {
       return true;
@@ -209,13 +224,17 @@ export class StratumV1Client {
     }
     const result = await this.miningAuthzService.authorizeMining(
       this.deviceSession.deviceId,
-      this.deviceSession.wallet,
+      this.deviceSession.payoutWalletHcash,
     );
     if (!result.allowed) {
       console.warn(
         `Authorization revoked for session ${this.extraNonceAndSessionId}: ${
           result.reason ?? 'unspecified'
         }`,
+      );
+      this.recordAuthFailure(
+        'session_authorize',
+        result.reason ?? 'unspecified',
       );
       this.deviceAuthorized = false;
       this.deviceSession = null;
@@ -408,6 +427,7 @@ export class StratumV1Client {
         const challengeMessage =
           this.parseDeviceChallengeMessage(parsedMessage);
         if (challengeMessage == null) {
+          this.recordAuthFailure('device_challenge', 'validation_error');
           const err = new StratumErrorMessage(
             parsedMessage?.id ?? null,
             eStratumErrorCode.OtherUnknown,
@@ -421,26 +441,10 @@ export class StratumV1Client {
         }
 
         const [deviceId, wallet] = challengeMessage.params;
-        if (
-          this.clientAuthorization != null &&
-          this.clientAuthorization.address !== wallet
-        ) {
-          const err = new StratumErrorMessage(
-            challengeMessage.id,
-            eStratumErrorCode.UnauthorizedWorker,
-            'Wallet must match mining.authorize address',
-          ).response();
-          const success = await this.write(err);
-          if (!success) {
-            return;
-          }
-          break;
-        }
-
         this.pendingChallenge = {
           ...this.miningAuthzService.createChallenge(),
           deviceId,
-          wallet,
+          payoutWalletHcash: wallet,
         };
         const response = {
           id: challengeMessage.id,
@@ -451,6 +455,7 @@ export class StratumV1Client {
             expires_at: this.pendingChallenge.expiresAt,
           },
         };
+        this.recordAuthSuccess('device_challenge');
         const success = await this.write(JSON.stringify(response) + '\n');
         if (!success) {
           return;
@@ -460,6 +465,7 @@ export class StratumV1Client {
       case eRequestMethod.DEVICE_AUTH: {
         const authMessage = this.parseDeviceAuthMessage(parsedMessage);
         if (authMessage == null) {
+          this.recordAuthFailure('device_auth', 'validation_error');
           const err = new StratumErrorMessage(
             parsedMessage?.id ?? null,
             eStratumErrorCode.OtherUnknown,
@@ -477,9 +483,10 @@ export class StratumV1Client {
           this.pendingChallenge == null ||
           this.pendingChallenge.challengeId !== challengeId ||
           this.pendingChallenge.deviceId !== deviceId ||
-          this.pendingChallenge.wallet !== wallet ||
+          this.pendingChallenge.payoutWalletHcash !== wallet ||
           this.pendingChallenge.expiresAt < Date.now()
         ) {
+          this.recordAuthFailure('device_auth', 'challenge_invalid_or_expired');
           const err = new StratumErrorMessage(
             authMessage.id,
             eStratumErrorCode.UnauthorizedWorker,
@@ -492,25 +499,9 @@ export class StratumV1Client {
           break;
         }
 
-        if (
-          this.clientAuthorization != null &&
-          this.clientAuthorization.address !== wallet
-        ) {
-          const err = new StratumErrorMessage(
-            authMessage.id,
-            eStratumErrorCode.UnauthorizedWorker,
-            'Wallet must match mining.authorize address',
-          ).response();
-          const success = await this.write(err);
-          if (!success) {
-            return;
-          }
-          break;
-        }
-
         const verifyPayload: ChallengeVerifyRequest = {
           deviceId,
-          wallet,
+          payoutWalletHcash: wallet,
           challengeId,
           nonce: this.pendingChallenge.nonce,
           expiresAt: this.pendingChallenge.expiresAt,
@@ -521,6 +512,10 @@ export class StratumV1Client {
           verifyPayload,
         );
         if (!verifyResult.allowed) {
+          this.recordAuthFailure(
+            'device_auth',
+            `challenge_${verifyResult.reason ?? 'unauthorized'}`,
+          );
           const err = new StratumErrorMessage(
             authMessage.id,
             eStratumErrorCode.UnauthorizedWorker,
@@ -538,6 +533,10 @@ export class StratumV1Client {
         const authorizationResult =
           await this.miningAuthzService.authorizeMining(deviceId, wallet);
         if (!authorizationResult.allowed) {
+          this.recordAuthFailure(
+            'device_auth',
+            `authorize_${authorizationResult.reason ?? 'unauthorized'}`,
+          );
           const err = new StratumErrorMessage(
             authMessage.id,
             eStratumErrorCode.UnauthorizedWorker,
@@ -552,8 +551,9 @@ export class StratumV1Client {
           break;
         }
 
+        this.recordAuthSuccess('device_auth');
         this.deviceAuthorized = true;
-        this.deviceSession = { deviceId, wallet };
+        this.deviceSession = { deviceId, payoutWalletHcash: wallet };
         this.pendingChallenge = undefined;
         const response = {
           id: authMessage.id,

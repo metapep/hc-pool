@@ -15,7 +15,7 @@ export interface PoolChallenge {
 
 export interface ChallengeVerifyRequest {
   deviceId: string;
-  wallet: string;
+  payoutWalletHcash: string;
   challengeId: string;
   nonce: string;
   expiresAt: number;
@@ -26,6 +26,42 @@ export interface AuthorizationResult {
   allowed: boolean;
   reason?: string;
   mode?: string;
+}
+
+export interface ActivationCodeIssueResponse {
+  ok: boolean;
+  deviceId: string;
+  status: string;
+  activationCode?: string | null;
+  expiresAt?: number | null;
+  activationUrl?: string;
+  ownerWalletEvm?: string | null;
+}
+
+export interface ActivationChallengeStartResponse {
+  ok: boolean;
+  challengeId: string;
+  deviceId: string;
+  ownerWalletEvm: string;
+  expiresAt: number;
+  messageToSign: string;
+}
+
+export interface ActivationChallengeVerifyResponse {
+  ok: boolean;
+  deviceId: string;
+  ownerWalletEvm: string;
+  status: string;
+}
+
+export interface OwnershipTransferStartResponse {
+  ok: boolean;
+  challengeId: string;
+  deviceId: string;
+  currentOwnerWalletEvm: string;
+  newOwnerWalletEvm: string;
+  expiresAt: number;
+  messageToSign: string;
 }
 
 @Injectable()
@@ -93,27 +129,110 @@ export class MiningAuthzService {
 
   public async authorizeMining(
     deviceId: string,
-    wallet: string,
+    payoutWalletHcash: string,
   ): Promise<AuthorizationResult> {
     if (!this.enabled) {
       return { allowed: true, mode: 'disabled' };
     }
     const response = await this.post('/v1/mining/authorize', {
       deviceId,
-      wallet,
+      payoutWalletHcash,
     });
     return this.normalizeResult(response);
   }
 
+  public async issueActivationCode(
+    deviceId: string,
+    payoutWalletHcash: string,
+  ): Promise<ActivationCodeIssueResponse> {
+    const response = await this.post('/v1/activation/code', {
+      deviceId,
+      payoutWalletHcash,
+    });
+    return response as ActivationCodeIssueResponse;
+  }
+
+  public async getClaimStatus(deviceId: string): Promise<unknown> {
+    return this.get(
+      `/v1/device/claim/status?deviceId=${encodeURIComponent(deviceId)}`,
+    );
+  }
+
+  public async startActivationChallenge(
+    activationCode: string,
+    ownerWalletEvm: string,
+  ): Promise<ActivationChallengeStartResponse> {
+    const response = await this.post('/v1/activation/challenge/start', {
+      activationCode,
+      ownerWalletEvm,
+    });
+    return response as ActivationChallengeStartResponse;
+  }
+
+  public async verifyActivationChallenge(
+    challengeId: string,
+    ownerWalletEvm: string,
+    signature: string,
+  ): Promise<ActivationChallengeVerifyResponse> {
+    const response = await this.post('/v1/activation/challenge/verify', {
+      challengeId,
+      ownerWalletEvm,
+      signature,
+    });
+    return response as ActivationChallengeVerifyResponse;
+  }
+
+  public async startOwnershipTransferChallenge(
+    deviceId: string,
+    currentOwnerWalletEvm: string,
+    newOwnerWalletEvm: string,
+  ): Promise<OwnershipTransferStartResponse> {
+    const response = await this.post('/v1/ownership/transfer/challenge/start', {
+      deviceId,
+      currentOwnerWalletEvm,
+      newOwnerWalletEvm,
+    });
+    return response as OwnershipTransferStartResponse;
+  }
+
+  public async verifyOwnershipTransferChallenge(
+    challengeId: string,
+    currentOwnerSignature: string,
+    newOwnerSignature: string,
+  ): Promise<unknown> {
+    return this.post('/v1/ownership/transfer/challenge/verify', {
+      challengeId,
+      currentOwnerSignature,
+      newOwnerSignature,
+    });
+  }
+
   private async post(path: string, data: object): Promise<unknown> {
-    if (!this.enabled) {
-      return { allowed: true };
-    }
     const response = await firstValueFrom(
       this.httpService.post(`${this.backendUrl}${path}`, data, {
-        headers: {
-          'x-api-key': this.backendApiKey,
-        },
+        headers: this.enabled
+          ? {
+              'x-api-key': this.backendApiKey,
+            }
+          : undefined,
+        httpsAgent: this.httpsAgent,
+        timeout: Number.parseInt(
+          `${this.configService.get('MINING_BACKEND_TIMEOUT_MS') ?? '5000'}`,
+          10,
+        ),
+      }),
+    );
+    return response.data;
+  }
+
+  private async get(path: string): Promise<unknown> {
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.backendUrl}${path}`, {
+        headers: this.enabled
+          ? {
+              'x-api-key': this.backendApiKey,
+            }
+          : undefined,
         httpsAgent: this.httpsAgent,
         timeout: Number.parseInt(
           `${this.configService.get('MINING_BACKEND_TIMEOUT_MS') ?? '5000'}`,

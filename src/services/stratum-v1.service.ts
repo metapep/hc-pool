@@ -8,11 +8,12 @@ import { BlocksService } from '../ORM/blocks/blocks.service';
 import { ClientStatisticsService } from '../ORM/client-statistics/client-statistics.service';
 import { ClientService } from '../ORM/client/client.service';
 import { BitcoinRpcService } from './bitcoin-rpc.service';
-import { NotificationService } from './notification.service';
-import { StratumV1JobsService } from './stratum-v1-jobs.service';
 import { ExternalSharesService } from './external-shares.service';
 import { MiningAuthzService } from './mining-authz.service';
+import { MiningSessionMetricsService } from './mining-session-metrics.service';
+import { NotificationService } from './notification.service';
 import { SignetBlockSigningService } from './signet-block-signing.service';
+import { StratumV1JobsService } from './stratum-v1-jobs.service';
 
 @Injectable()
 export class StratumV1Service implements OnModuleInit {
@@ -27,6 +28,7 @@ export class StratumV1Service implements OnModuleInit {
     private readonly addressSettingsService: AddressSettingsService,
     private readonly externalSharesService: ExternalSharesService,
     private readonly miningAuthzService: MiningAuthzService,
+    private readonly miningSessionMetricsService: MiningSessionMetricsService,
     private readonly signetBlockSigningService: SignetBlockSigningService,
   ) {}
 
@@ -56,6 +58,7 @@ export class StratumV1Service implements OnModuleInit {
         this.addressSettingsService,
         this.externalSharesService,
         this.miningAuthzService,
+        this.miningSessionMetricsService,
         this.signetBlockSigningService,
       );
 
