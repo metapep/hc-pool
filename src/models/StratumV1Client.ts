@@ -842,8 +842,8 @@ export class StratumV1Client {
       }
     }
 
-    const submissionHash = submission.hash();
-    if (this.miningSubmissionHashes.has(submissionHash)) {
+    const submissionFingerprint = submission.hash();
+    if (this.miningSubmissionHashes.has(submissionFingerprint)) {
       const err = new StratumErrorMessage(
         submission.id,
         eStratumErrorCode.DuplicateShare,
@@ -855,7 +855,7 @@ export class StratumV1Client {
       }
       return false;
     } else {
-      this.miningSubmissionHashes.add(submissionHash);
+      this.miningSubmissionHashes.add(submissionFingerprint);
     }
 
     const job = this.stratumV1JobsService.getJobById(submission.jobId);
