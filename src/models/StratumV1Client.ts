@@ -72,6 +72,11 @@ export class StratumV1Client {
     payoutWalletHcash: string;
   };
   private deviceSession?: { deviceId: string; payoutWalletHcash: string };
+  // Per device-class plan P-3 / P-4 / P-6. One bucket per session,
+  // created on mining.authorize success, destroyed on disconnect.
+  private classTokenBucket?: import('./TokenBucket').TokenBucket;
+  private classId?: string | null;
+  private classTargetHashrateHs?: number | null;
 
   private entity: ClientEntity;
   private creatingEntity: Promise<void>;
@@ -240,6 +245,9 @@ export class StratumV1Client {
       this.deviceSession = null;
       return false;
     }
+    // Per device-class plan P-5: refresh bucket params if class changed
+    // mid-session (e.g., admin upgraded customer from J50 to J100).
+    this.applyClassPolicy(result);
     return true;
   }
 
@@ -267,6 +275,96 @@ export class StratumV1Client {
     this.backgroundWork.forEach((work) => {
       clearInterval(work);
     });
+
+    // Per device-class plan P-6: bucket destroyed on session end. Next
+    // session starts a fresh empty bucket — reconnect-flooding cannot
+    // grant burst capacity.
+    this.classTokenBucket = undefined;
+    this.classId = undefined;
+    this.classTargetHashrateHs = undefined;
+  }
+
+  /**
+   * Per device-class plan P-4. Returns true if the share should be
+   * rejected for exceeding the class cap. Returns false when:
+   *   - feature flag MINING_BUCKET_ENFORCEMENT_ENABLED is false
+   *     (observe-only: refill/consume tracked but never reject)
+   *   - bucket has enough credit for this share
+   *   - bucket isn't initialized yet (e.g., bypass paths)
+   */
+  private classBucketGateRejected(difficulty: number): boolean {
+    const { shareCostUnits } = require('./TokenBucket') as typeof import('./TokenBucket');
+    if (this.classTokenBucket == null) {
+      return false;
+    }
+    const cost = shareCostUnits(difficulty);
+    const consumed = this.classTokenBucket.tryConsume(cost);
+    const enforcementOn =
+      `${process.env.MINING_BUCKET_ENFORCEMENT_ENABLED ?? 'false'}`.toLowerCase() ===
+      'true';
+    if (!consumed) {
+      this.miningSessionMetricsService?.recordBucketRejection(
+        this.deviceSession?.deviceId,
+        this.classId ?? null,
+        enforcementOn,
+      );
+      return enforcementOn;
+    }
+    this.miningSessionMetricsService?.recordBucketAcceptance(
+      this.deviceSession?.deviceId,
+      this.classId ?? null,
+    );
+    return false;
+  }
+
+  // Per device-class plan P-3 + P-5. Called on mining.authorize success
+  // and again on every 15s re-auth when the policy may have changed.
+  // Fail-closed to SAFEST_CAP_HS when backend doesn't return class fields.
+  //
+  // Option A (per user request): bypass-mode sessions skip the bucket
+  // entirely. Bypass is the operator/treasury escape hatch (see
+  // BYPASS_DEVICES env var; see app.py's short-circuit at the top of
+  // /v1/mining/authorize). Capping bypass devices defeats their purpose
+  // and would regress the existing test miner from ~250 KH/s to 5 KH/s
+  // when MINING_BUCKET_ENFORCEMENT_ENABLED flips to true. Bypass = no
+  // bucket, no rejection, no cap.
+  private applyClassPolicy(result: import('../services/mining-authz.service').AuthorizationResult): void {
+    if (result.mode === 'bypass') {
+      this.classId = 'bypass';
+      this.classTargetHashrateHs = null;
+      this.classTokenBucket = undefined;
+      return;
+    }
+    const TokenBucketCtor = require('./TokenBucket').TokenBucket as typeof import('./TokenBucket').TokenBucket;
+    const SAFEST_CAP_HS = require('../services/mining-authz.service').SAFEST_CAP_HS as number;
+    const target =
+      typeof result.targetHashrateHs === 'number' && result.targetHashrateHs > 0
+        ? result.targetHashrateHs
+        : SAFEST_CAP_HS;
+    if (
+      typeof result.targetHashrateHs !== 'number' ||
+      !(result.targetHashrateHs > 0)
+    ) {
+      console.warn(
+        `policy_field_missing: device=${
+          this.deviceSession?.deviceId ?? '?'
+        } falling back to SAFEST_CAP_HS=${SAFEST_CAP_HS}`,
+      );
+    }
+    this.classId = result.classId ?? null;
+    this.classTargetHashrateHs = target;
+    const poolDiffFloor = this.chainProfile.stratumMinDiff;
+    if (this.classTokenBucket == null) {
+      this.classTokenBucket = new TokenBucketCtor({
+        targetHashrateHs: target,
+        poolDiffFloor,
+      });
+    } else {
+      this.classTokenBucket.updateParams({
+        targetHashrateHs: target,
+        poolDiffFloor,
+      });
+    }
   }
 
   private getRandomHexString() {
@@ -555,6 +653,11 @@ export class StratumV1Client {
         this.deviceAuthorized = true;
         this.deviceSession = { deviceId, payoutWalletHcash: wallet };
         this.pendingChallenge = undefined;
+        // Per device-class plan P-3 / P-4 / P-6: instantiate token bucket
+        // on authorize success. Empty initial credits prevent reconnect
+        // bursts. Falls back to SAFEST_CAP_HS when backend doesn't return
+        // class fields (per audit fix #4 / P-2).
+        this.applyClassPolicy(authorizationResult);
         const response = {
           id: authMessage.id,
           error: null,
@@ -965,6 +1068,21 @@ export class StratumV1Client {
     //console.log(`DIFF: ${submissionDifficulty} of ${this.sessionDifficulty} from ${this.clientAuthorization.worker + '.' + this.extraNonceAndSessionId}`);
 
     if (submissionDifficulty >= this.sessionDifficulty) {
+      // Per device-class plan P-4 / C8: token-bucket gate after the existing
+      // vardiff difficulty check. Bucket runs in observe-only mode unless
+      // MINING_BUCKET_ENFORCEMENT_ENABLED=true (per P-2 feature flag).
+      const bucketGateRejected = this.classBucketGateRejected(
+        this.sessionDifficulty,
+      );
+      if (bucketGateRejected) {
+        const err = new StratumErrorMessage(
+          submission.id,
+          eStratumErrorCode.LowDifficultyShare,
+          'class_cap_exceeded',
+        ).response();
+        await this.write(err);
+        return false;
+      }
       if (
         !templateIsStale &&
         submissionDifficulty >= unsignedNetworkDifficulty

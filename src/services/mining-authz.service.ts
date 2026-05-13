@@ -26,7 +26,19 @@ export interface AuthorizationResult {
   allowed: boolean;
   reason?: string;
   mode?: string;
+  // Per device-class plan B-8 + P-2. Backend returns classId/targetHashrateHs
+  // populated only when allowed; null on denial. Pool consumers MUST treat
+  // missing/undefined as fail-closed and use SAFEST_CAP_HS (audit fix #4).
+  // See ../models/TokenBucket.ts for the canonical fallback handling.
+  classId?: string | null;
+  targetHashrateHs?: number | null;
 }
+
+// Per device-class plan B-6 / audit fix #4: hardcoded constant in firmware
+// AND backend AND pool. Used as the fail-closed cap when backend is
+// unreachable, returns missing fields, or returns null fields on a denied
+// authorize (which still has classId/targetHashrateHs nullable).
+export const SAFEST_CAP_HS = 5000;
 
 export interface ActivationCodeIssueResponse {
   ok: boolean;
@@ -205,6 +217,20 @@ export class MiningAuthzService {
       currentOwnerSignature,
       newOwnerSignature,
     });
+  }
+
+  // Per device-class plan P-2b. Forwards firmware's POST /api/policy
+  // (issued via the existing pool URL pattern) to the backend's
+  // POST /v1/device/policy. Body passes through unchanged so backend
+  // HMAC verification works against the firmware-signed proof.
+  public async fetchDevicePolicy(body: object): Promise<unknown> {
+    return this.post('/v1/device/policy', body);
+  }
+
+  // Per device-class plan P-2b. Forwards POST /api/ota/report to
+  // backend's POST /v1/device/ota/report. No proxy-side state.
+  public async reportDeviceOta(body: object): Promise<unknown> {
+    return this.post('/v1/device/ota/report', body);
   }
 
   private async post(path: string, data: object): Promise<unknown> {

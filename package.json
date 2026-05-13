@@ -44,7 +44,7 @@
     "reflect-metadata": "^0.1.13",
     "rpc-bitcoin": "^2.0.0",
     "rxjs": "^7.2.0",
-    "sqlite3": "^5.1.6",
+    "pg": "^8.13.1",
     "tiny-secp256k1": "^2.2.3",
     "typeorm": "^0.3.17",
     "zeromq": "6.0.0-beta.19"
@@ -59,6 +59,7 @@
     "@types/jest": "29.5.1",
     "@types/node": "^18.16.12",
     "@types/node-telegram-bot-api": "^0.61.6",
+    "@types/pg": "^8.11.10",
     "@types/supertest": "^2.0.11",
     "@typescript-eslint/eslint-plugin": "^5.0.0",
     "@typescript-eslint/parser": "^5.0.0",
