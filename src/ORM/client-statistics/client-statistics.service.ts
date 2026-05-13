@@ -104,6 +104,9 @@ export class ClientStatisticsService {
 
         var yesterday = new Date(new Date().getTime() - (24 * 60 * 60 * 1000));
 
+        // Postgres requires $N positional placeholders, not the SQLite '?'.
+        // Column names that are lowercase (address, time, shares) need no
+        // quoting; camelCase columns elsewhere do (see sibling queries).
         const query = `
                 SELECT
                     time label,
@@ -111,7 +114,7 @@ export class ClientStatisticsService {
                 FROM
                     client_statistics_entity AS entry
                 WHERE
-                    entry.address = ? AND entry.time > ${yesterday.getTime()}
+                    entry.address = $1 AND entry.time > ${yesterday.getTime()}
                 GROUP BY
                     time
                 ORDER BY
@@ -135,13 +138,16 @@ export class ClientStatisticsService {
 
         var oneHour = new Date(new Date().getTime() - (60 * 60 * 1000));
 
+        // Postgres: $N placeholders + double-quote camelCase identifiers
+        // ('clientName' would otherwise be folded to lowercase 'clientname'
+        // which doesn't exist in the TypeORM-managed schema).
         const query = `
             SELECT
             SUM(entry.shares) AS difficultySum
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.time > ${oneHour.getTime()}
+                entry.address = $1 AND entry."clientName" = $2 AND entry.time > ${oneHour.getTime()}
         `;
 
         const result = await this.clientStatisticsRepository.query(query, [address, clientName]);
@@ -163,7 +169,7 @@ export class ClientStatisticsService {
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.time > ${yesterday.getTime()}
+                entry.address = $1 AND entry."clientName" = $2 AND entry.time > ${yesterday.getTime()}
             GROUP BY
                 time
             ORDER BY
@@ -184,15 +190,19 @@ export class ClientStatisticsService {
 
     public async getHashRateForSession(address: string, clientName: string, sessionId: string) {
 
+        // Postgres: quote every camelCase identifier (createdAt, updatedAt,
+        // clientName, sessionId) and use $N placeholders. The aliasless
+        // SELECT-list columns get returned to JS as 'createdAt' /
+        // 'updatedAt' string keys, which match the existing JS callers.
         const query = `
             SELECT
-                createdAt,
-                updatedAt,
+                "createdAt",
+                "updatedAt",
                 shares
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.sessionId = ?
+                entry.address = $1 AND entry."clientName" = $2 AND entry."sessionId" = $3
             ORDER BY time DESC
             LIMIT 2;
         `;
@@ -234,7 +244,7 @@ export class ClientStatisticsService {
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.sessionId = ? AND entry.time > ${yesterday.getTime()}
+                entry.address = $1 AND entry."clientName" = $2 AND entry."sessionId" = $3 AND entry.time > ${yesterday.getTime()}
             GROUP BY
                 time
             ORDER BY
@@ -265,11 +275,16 @@ export class ClientStatisticsService {
         const safeWindowMinutes = Math.max(Math.floor(windowMinutes), 1);
         const since = Date.now() - (safeWindowMinutes * 60 * 1000);
 
+        // Postgres lowercases the unquoted 'acceptedCount' identifier to
+        // 'acceptedcount' which doesn't exist in the TypeORM-managed
+        // schema (the column is created with case preserved). Quote it
+        // in both the aggregate and the alias so /api/info responses
+        // return acceptedCount, not acceptedcount.
         const query = `
             SELECT
-                COALESCE(SUM(acceptedCount), 0) AS acceptedCount,
+                COALESCE(SUM("acceptedCount"), 0) AS "acceptedCount",
                 COALESCE(SUM(shares), 0) AS shares,
-                MAX(time) AS latestTime
+                MAX(time) AS "latestTime"
             FROM
                 client_statistics_entity
             WHERE

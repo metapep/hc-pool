@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BehaviorSubject, firstValueFrom } from 'rxjs';
-import { ObjectLiteral, Repository } from 'typeorm';
+import { IsNull, LessThan, ObjectLiteral, Repository } from 'typeorm';
 
 import { ClientEntity } from './client.entity';
 
@@ -35,14 +35,18 @@ export class ClientService {
     }
 
     public async killDeadClients() {
-        var fiveMinutes = new Date(new Date().getTime() - (5 * 60 * 1000)).toISOString();
-
-        return await this.clientRepository
-            .createQueryBuilder()
-            .update(ClientEntity)
-            .set({ deletedAt: () => "DATETIME('now')" })
-            .where("deletedAt IS NULL AND updatedAt < DATETIME(:fiveMinutes)", { fiveMinutes })
-            .execute();
+        // Mark zombie sessions (no heartbeat in last 5 min) as soft-deleted.
+        // Upstream public-pool used raw SQLite DATETIME() calls in a
+        // QueryBuilder.set/where pair; on Postgres 'function datetime does
+        // not exist' fires every interval and dead-session cleanup never
+        // runs. Switching to TypeORM's dialect-agnostic IsNull / LessThan
+        // operators + a JS Date sidesteps the SQLite/Postgres divergence
+        // and matches the deleteOldStatistics pattern in the sister service.
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        return await this.clientRepository.update(
+            { deletedAt: IsNull(), updatedAt: LessThan(fiveMinutesAgo) },
+            { deletedAt: new Date() },
+        );
     }
 
     public async heartbeat(address: string, clientName: string, sessionId: string, hashRate: number, updatedAt: Date) {
