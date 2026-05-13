@@ -13,7 +13,8 @@ export class ExternalSharesEntity extends TrackedEntity {
     @Column()
     clientName: string;
 
-    @Column({ type: 'integer' })
+    // ms-since-epoch — outgrows int32 in 1973-Apr; bigint required on Postgres.
+    @Column({ type: 'bigint' })
     time: number;
 
     @Column({ type: 'real' })

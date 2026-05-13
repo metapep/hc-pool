@@ -22,7 +22,8 @@ export class ClientStatisticsEntity extends TrackedEntity {
     sessionId: string;
 
     @Index()
-    @Column({ type: 'integer' })
+    // ms-since-epoch — outgrows int32 in 1973-Apr; bigint required on Postgres.
+    @Column({ type: 'bigint' })
     time: number;
 
     @Column({ type: 'real' })
