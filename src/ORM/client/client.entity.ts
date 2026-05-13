@@ -34,7 +34,11 @@ export class ClientEntity extends TrackedEntity {
     @Column({ type: 'real', default: 0 })
     bestDifficulty: number
 
-    @Column({ default: 0 })
+    // Live hashrate is a JS float (e.g. 250117.44). SQLite's untyped integer
+    // column silently accepted the value but Postgres' int32 rejects with
+    // 22P02 'invalid input syntax for type integer'. Use double precision so
+    // the full IEEE-754 range round-trips cleanly.
+    @Column({ type: 'double precision', default: 0 })
     hashRate: number;
 
 }
