@@ -1,6 +1,7 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import axios from 'axios';
 import { randomBytes } from 'crypto';
 import { Agent as HttpsAgent } from 'https';
 import { firstValueFrom } from 'rxjs';
@@ -233,40 +234,70 @@ export class MiningAuthzService {
     return this.post('/v1/device/ota/report', body);
   }
 
+  // Re-throw axios errors that carry a backend response as an
+  // HttpException with the original status + body. NestJS's default
+  // exception filter will then return the real backend status to HTTP
+  // callers (DevicePolicyController, ActivationController) instead of
+  // a generic 500. Network / timeout failures (no err.response) are
+  // re-thrown unchanged — NestJS still converts those to 500, which is
+  // the correct "backend unreachable" signal.
+  //
+  // Stratum callers (StratumV1Client) currently just let any error
+  // bubble to their outer try/catch which closes the socket — the
+  // change in error type from AxiosError to HttpException doesn't
+  // affect that path.
+  private rethrowBackendError(err: unknown): never {
+    if (axios.isAxiosError(err) && err.response) {
+      throw new HttpException(
+        err.response.data ?? { error: err.response.statusText },
+        err.response.status,
+      );
+    }
+    throw err;
+  }
+
   private async post(path: string, data: object): Promise<unknown> {
-    const response = await firstValueFrom(
-      this.httpService.post(`${this.backendUrl}${path}`, data, {
-        headers: this.enabled
-          ? {
-              'x-api-key': this.backendApiKey,
-            }
-          : undefined,
-        httpsAgent: this.httpsAgent,
-        timeout: Number.parseInt(
-          `${this.configService.get('MINING_BACKEND_TIMEOUT_MS') ?? '5000'}`,
-          10,
-        ),
-      }),
-    );
-    return response.data;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(`${this.backendUrl}${path}`, data, {
+          headers: this.enabled
+            ? {
+                'x-api-key': this.backendApiKey,
+              }
+            : undefined,
+          httpsAgent: this.httpsAgent,
+          timeout: Number.parseInt(
+            `${this.configService.get('MINING_BACKEND_TIMEOUT_MS') ?? '5000'}`,
+            10,
+          ),
+        }),
+      );
+      return response.data;
+    } catch (err) {
+      this.rethrowBackendError(err);
+    }
   }
 
   private async get(path: string): Promise<unknown> {
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.backendUrl}${path}`, {
-        headers: this.enabled
-          ? {
-              'x-api-key': this.backendApiKey,
-            }
-          : undefined,
-        httpsAgent: this.httpsAgent,
-        timeout: Number.parseInt(
-          `${this.configService.get('MINING_BACKEND_TIMEOUT_MS') ?? '5000'}`,
-          10,
-        ),
-      }),
-    );
-    return response.data;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.backendUrl}${path}`, {
+          headers: this.enabled
+            ? {
+                'x-api-key': this.backendApiKey,
+              }
+            : undefined,
+          httpsAgent: this.httpsAgent,
+          timeout: Number.parseInt(
+            `${this.configService.get('MINING_BACKEND_TIMEOUT_MS') ?? '5000'}`,
+            10,
+          ),
+        }),
+      );
+      return response.data;
+    } catch (err) {
+      this.rethrowBackendError(err);
+    }
   }
 
   private normalizeResult(response: unknown): AuthorizationResult {
